@@ -140,6 +140,17 @@ DEFAULT_FOCUS_MATCHERS = [
 ACTIVE_FOCUS_TERMS = DEFAULT_FOCUS_TERMS[:]
 ACTIVE_FOCUS_MATCHERS = DEFAULT_FOCUS_MATCHERS[:]
 
+FOCUS_TERM_ALIASES = {
+    "tracking": ["tracker"],
+    "multi-object tracking": ["multiple object tracking", "multi-target tracking", "mot"],
+    "multimodal tracking": ["cross-modal tracking", "cross modal tracking"],
+    "multimodal fusion": ["cross-modal fusion", "cross modal fusion"],
+    "test-time adaptation": ["tta"],
+    "test-time training": ["ttt"],
+    "domain adaptation": ["unsupervised domain adaptation"],
+    "open-vocabulary tracking": ["open vocabulary tracking"],
+}
+
 DOMAIN_RULES = {
     "tracking": ["tracking", "tracker", "tracklet", "mot", "multi-object tracking", "multi-target tracking"],
     "detection": ["detection", "detector", "detect", "object detection"],
@@ -261,6 +272,18 @@ def wildcard_focus_pattern(term: str) -> str:
     return rf"\b{escaped}\b"
 
 
+def focus_term_variants(term: str) -> List[str]:
+    canonical = safe_text(term).lower()
+    if not canonical:
+        return []
+    variants = [canonical]
+    for alias in FOCUS_TERM_ALIASES.get(canonical, []):
+        alias = safe_text(alias).lower()
+        if alias and alias not in variants:
+            variants.append(alias)
+    return variants
+
+
 def configure_focus_terms(domain: str, override_terms: str, extra_terms: str) -> List[str]:
     if override_terms.strip():
         terms = parse_csv_terms(override_terms)
@@ -284,11 +307,12 @@ def configure_focus_terms(domain: str, override_terms: str, extra_terms: str) ->
 
 
 def configure_focus_matchers(terms: List[str]) -> List[str]:
-    matchers = DEFAULT_FOCUS_MATCHERS[:]
+    matchers: List[str] = []
     for term in terms:
-        pat = wildcard_focus_pattern(term)
-        if pat not in matchers:
-            matchers.append(pat)
+        for variant in focus_term_variants(term):
+            pat = wildcard_focus_pattern(variant)
+            if pat not in matchers:
+                matchers.append(pat)
     return matchers
 
 
@@ -1659,13 +1683,22 @@ def collect_graph_theme_candidates(p: Paper, max_candidates: int = 12) -> List[s
     return list(collect_graph_theme_scores(p).keys())[:max_candidates]
 
 
+def matched_focus_terms_for_text(text: str) -> List[str]:
+    blob = (text or "").lower()
+    matches: List[str] = []
+    for term in ACTIVE_FOCUS_TERMS:
+        variants = focus_term_variants(term)
+        if any(rule_term_matches(blob, variant) for variant in variants):
+            matches.append(term)
+    return matches
+
+
 def refresh_paper_derived_fields(p: Paper) -> Paper:
     merged_text = f"{p.title} {p.summary_en} {p.comment} {p.journal_ref}"
     p.domain_tags = classify_from_rules(merged_text, DOMAIN_RULES)
     p.task_tags = classify_from_rules(merged_text, TASK_RULES)
     p.type_tags = classify_from_rules(merged_text, TYPE_RULES)
-    lower = merged_text.lower()
-    p.focus_tags = [term for term in ACTIVE_FOCUS_TERMS if rule_term_matches(lower, term)]
+    p.focus_tags = matched_focus_terms_for_text(merged_text)
     venue, hint = extract_acceptance_info(p.comment, p.journal_ref)
     p.accepted_venue = venue
     p.accepted_hint = hint
@@ -2196,16 +2229,17 @@ def fetch_venue_pool(categories: List[str], venues: List[str], latest_n: int, pa
 
 def focus_score(p: Paper) -> int:
     blob = f"{p.title} {p.summary_en} {p.comment} {' '.join(p.categories)}".lower()
+    title_blob = f"{p.title} {p.comment}".lower()
     score = 0
-    for pat in ACTIVE_FOCUS_MATCHERS:
-        if re.search(pat, blob):
-            score += 1
-    if rule_term_matches(blob, "tracking") or rule_term_matches(blob, "tracker"):
+    for term in ACTIVE_FOCUS_TERMS:
+        variants = focus_term_variants(term)
+        hits = sum(rule_term_occurrences(blob, variant) for variant in variants)
+        if hits <= 0:
+            continue
         score += 2
-    if any(rule_term_matches(blob, term) for term in ["test-time adaptation", "test-time training", "test-time update", "domain adaptation", "domain shift"]):
-        score += 1
-    if rule_term_matches(blob, "prompt") or rule_term_matches(blob, "prompt tuning") or rule_term_matches(blob, "prompt learning"):
-        score += 1
+        score += min(2, hits - 1)
+        if any(rule_term_matches(title_blob, variant) for variant in variants):
+            score += 3
     return score
 
 

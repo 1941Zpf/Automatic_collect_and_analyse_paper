@@ -38,9 +38,30 @@ arXiv 论文日报向导
 EOF
 }
 
+quote_display_arg() {
+  local value="${1-}"
+  if [[ -z "$value" ]]; then
+    printf "''"
+    return 0
+  fi
+  if [[ "$value" =~ ^[A-Za-z0-9_./:=,+-]+$ ]]; then
+    printf '%s' "$value"
+    return 0
+  fi
+  value="${value//\'/\'\\\'\'}"
+  printf "'%s'" "$value"
+}
+
 quote_command() {
+  local first="1"
   local part
-  printf '%q ' "$@"
+  for part in "$@"; do
+    if [[ "$first" != "1" ]]; then
+      printf ' '
+    fi
+    quote_display_arg "$part"
+    first="0"
+  done
   printf '\n'
 }
 
@@ -107,6 +128,12 @@ append_cmd_arg() {
   if [[ -n "$value" ]]; then
     CMD+=("$key" "$value")
   fi
+}
+
+append_cmd_arg_force() {
+  local key="$1"
+  local value="${2-}"
+  CMD+=("$key" "$value")
 }
 
 find_env_update_index() {
@@ -185,7 +212,7 @@ prompt_report_suffix() {
   local suffix=""
   echo
   suffix="$(read_optional "报告文件后缀（留空 = 无后缀，例如 tracking_debug）")"
-  append_cmd_arg "--output-suffix" "$suffix"
+  append_cmd_arg_force "--output-suffix" "$suffix"
 }
 
 prompt_ignore_fetched() {
@@ -202,20 +229,24 @@ build_preset_command() {
   CMD=("$RUNNER")
   case "$name" in
     cv)
-      CMD+=("--domain" "cv")
+      CMD+=("--domain" "cv" "--categories" "" "--focus-terms" "" "--focus-terms-extra" "")
       ;;
     ai)
       CMD+=(
         "--domain" "ai"
+        "--categories" ""
         "--focus-terms" "agent,reasoning,alignment,tool use,large language model,multimodal reasoning,planning,reinforcement learning"
+        "--focus-terms-extra" ""
       )
       ;;
     both)
-      CMD+=("--domain" "both" "--daily-limit-per-cat" "260" "--focus-latest" "100")
+      CMD+=("--domain" "both" "--categories" "" "--focus-terms" "" "--focus-terms-extra" "" "--daily-limit-per-cat" "260" "--focus-latest" "100")
       ;;
     tracking)
       CMD+=(
         "--domain" "cv"
+        "--categories" ""
+        "--focus-terms" ""
         "--focus-terms-extra" "tracking,multiple object tracking,multimodal tracking,visual object tracking,test-time adaptation,domain adaptation,domain shift,distribution shift,prompt tuning,test-time update,online adaptation,multimodal fusion"
         "--focus-latest" "100"
         "--focus-recent-scan" "1600"
@@ -224,6 +255,9 @@ build_preset_command() {
     quick)
       CMD+=(
         "--domain" "cv"
+        "--categories" ""
+        "--focus-terms" ""
+        "--focus-terms-extra" ""
         "--daily-limit-per-cat" "50"
         "--focus-latest" "20"
         "--focus-recent-scan" "300"
@@ -293,7 +327,7 @@ custom_run() {
   set_env_update "DIGEST_DOMAIN" "$domain"
 
   categories="$(read_optional "手动指定 arXiv 分类，例如 cs.CV,cs.AI（留空 = 根据领域自动推导）")"
-  append_cmd_arg "--categories" "$categories"
+  append_cmd_arg_force "--categories" "$categories"
   set_env_update "ARXIV_CATEGORIES" "$categories"
 
   daily_limit="$(read_default "每个分类抓取的日报论文数量" "${DAILY_LIMIT_PER_CAT:-260}")"
@@ -333,19 +367,23 @@ custom_run() {
   case "$focus_mode" in
     2)
       focus_terms="$(read_optional "要追加的重点方向关键词，用英文逗号分隔")"
-      append_cmd_arg "--focus-terms-extra" "$focus_terms"
+      append_cmd_arg_force "--focus-terms" ""
+      append_cmd_arg_force "--focus-terms-extra" "$focus_terms"
       set_env_update "FOCUS_TERMS_EXTRA" "$focus_terms"
       set_env_update "FOCUS_TERMS_OVERRIDE" ""
       ;;
     3)
       focus_terms="$(read_optional "用于完全替换的重点方向关键词，用英文逗号分隔")"
-      append_cmd_arg "--focus-terms" "$focus_terms"
+      append_cmd_arg_force "--focus-terms" "$focus_terms"
+      append_cmd_arg_force "--focus-terms-extra" ""
       set_env_update "FOCUS_TERMS_OVERRIDE" "$focus_terms"
       set_env_update "FOCUS_TERMS_EXTRA" ""
       ;;
     *)
-      set_env_update "FOCUS_TERMS_OVERRIDE" "${FOCUS_TERMS_OVERRIDE:-}"
-      set_env_update "FOCUS_TERMS_EXTRA" "${FOCUS_TERMS_EXTRA:-}"
+      append_cmd_arg_force "--focus-terms" ""
+      append_cmd_arg_force "--focus-terms-extra" ""
+      set_env_update "FOCUS_TERMS_OVERRIDE" ""
+      set_env_update "FOCUS_TERMS_EXTRA" ""
       ;;
   esac
 
